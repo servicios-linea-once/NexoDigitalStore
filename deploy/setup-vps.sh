@@ -1,14 +1,14 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════════════════════
 # Nexo Digital Store — Instalación inicial del VPS
-# Compatible: Debian 12 (Bookworm) — Contabo VPS
+# Compatible: Ubuntu 24.04 LTS (Noble Numbat)
 #
 # Ejecutar UNA SOLA VEZ como root:
 #   bash setup-vps.sh
 #
 # Qué hace:
 #   1. Actualiza el sistema
-#   2. Instala PHP 8.3 (repo sury.org), Nginx, MySQL 8, Redis, Node 20, Composer
+#   2. Instala PHP 8.3 (PPA ondrej/php), Nginx, MySQL 8, Redis, Node 20, Composer
 #   3. Crea el usuario "nexo" y el directorio /var/www/nexokeys
 #   4. Clona el repositorio
 #   5. Instala Supervisor para Horizon
@@ -23,14 +23,13 @@ APP_USER="nexo"
 APP_DIR="/var/www/nexokeys"
 PHP_VERSION="8.3"
 NODE_VERSION="20"
-REPO_URL="git@github.com:servicios-linea-once/NexoDigitalStore.git"          # ← git@github.com:tu-usuario/nexokeys.git
+REPO_URL=""          # ← git@github.com:tu-usuario/nexokeys.git
 DOMAIN=""            # ← tu dominio cuando lo tengas (déjalo vacío por ahora)
 DB_NAME="nexokeys"
 DB_USER="nexo_db"
-DB_PASS="@Jhon#Smith@2003RT"           # ← contraseña segura para MySQL (mínimo 16 chars)
+DB_PASS=""           # ← contraseña segura para MySQL (mínimo 16 chars)
 
-# Tu clave pública SSH (pégala aquí para no necesitar contraseña)
-# Obtenerla en tu máquina local con: cat ~/.ssh/id_ed25519.pub
+# Tu clave pública SSH (cat ~/.ssh/id_ed25519.pub en tu máquina local)
 SSH_PUBLIC_KEY=""    # ← pega aquí tu clave pública (opcional pero recomendado)
 
 # Colores
@@ -42,40 +41,30 @@ error()   { echo -e "${RED}✗ $1${NC}"; exit 1; }
 
 # ── Validaciones previas ──────────────────────────────────────────────────────
 [ "$EUID" -eq 0 ] || error "Ejecuta como root: sudo bash setup-vps.sh"
-[ -n "$DB_PASS" ] || error "Completa la variable DB_PASS antes de ejecutar."
+[ -n "$DB_PASS" ]  || error "Completa la variable DB_PASS antes de ejecutar."
 
-# Verificar que es Debian 12
 if [ -f /etc/os-release ]; then
     . /etc/os-release
-    if [[ "$ID" != "debian" ]]; then
-        warn "Este script está optimizado para Debian 12. Tu sistema: $PRETTY_NAME"
+    if [[ "$ID" != "ubuntu" ]]; then
+        warn "Este script está optimizado para Ubuntu 24. Tu sistema: $PRETTY_NAME"
         read -rp "¿Continuar de todos modos? [s/N]: " ok
         [[ "$ok" =~ ^[sS]$ ]] || exit 1
     fi
 fi
 
 # ── 1. Sistema base ───────────────────────────────────────────────────────────
-info "Actualizando sistema Debian 12..."
+info "Actualizando Ubuntu 24..."
 apt-get update -qq
-apt-get upgrade -y -qq
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq
 apt-get install -y -qq \
     curl wget git unzip zip gnupg2 \
-    ca-certificates lsb-release apt-transport-https \
+    ca-certificates lsb-release software-properties-common \
     ufw fail2ban sudo
 success "Sistema actualizado"
 
-# ── 2. PHP 8.3 (repositorio sury.org — oficial para Debian) ──────────────────
-info "Agregando repositorio PHP 8.3 (sury.org)..."
-curl -sSLo /tmp/debsuryorg-archive-keyring.gpg \
-    https://packages.sury.org/php/apt.gpg
-install -D -o root -g root -m 644 \
-    /tmp/debsuryorg-archive-keyring.gpg \
-    /usr/share/keyrings/debsuryorg-archive-keyring.gpg
-
-echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] \
-https://packages.sury.org/php/ $(lsb_release -sc) main" \
-    > /etc/apt/sources.list.d/php.list
-
+# ── 2. PHP 8.3 (PPA ondrej/php — estándar en Ubuntu) ─────────────────────────
+info "Agregando PPA ondrej/php e instalando PHP ${PHP_VERSION}..."
+add-apt-repository -y ppa:ondrej/php
 apt-get update -qq
 apt-get install -y -qq \
     php${PHP_VERSION}-fpm \
@@ -91,7 +80,7 @@ apt-get install -y -qq \
     php${PHP_VERSION}-gd \
     php${PHP_VERSION}-opcache
 
-# OPcache para producción
+# OPcache optimizado para producción
 cat > /etc/php/${PHP_VERSION}/fpm/conf.d/99-nexo-opcache.ini << 'EOF'
 opcache.enable=1
 opcache.memory_consumption=256
@@ -102,6 +91,14 @@ opcache.validate_timestamps=0
 opcache.save_comments=1
 opcache.fast_shutdown=1
 EOF
+
+# PHP.ini — ajustes de producción
+sed -i 's/^upload_max_filesize.*/upload_max_filesize = 20M/'   /etc/php/${PHP_VERSION}/fpm/php.ini
+sed -i 's/^post_max_size.*/post_max_size = 20M/'               /etc/php/${PHP_VERSION}/fpm/php.ini
+sed -i 's/^memory_limit.*/memory_limit = 256M/'               /etc/php/${PHP_VERSION}/fpm/php.ini
+sed -i 's/^max_execution_time.*/max_execution_time = 300/'     /etc/php/${PHP_VERSION}/fpm/php.ini
+sed -i 's/^expose_php.*/expose_php = Off/'                     /etc/php/${PHP_VERSION}/fpm/php.ini
+sed -i 's/^display_errors.*/display_errors = Off/'             /etc/php/${PHP_VERSION}/fpm/php.ini
 
 systemctl enable php${PHP_VERSION}-fpm
 systemctl start php${PHP_VERSION}-fpm
@@ -115,13 +112,13 @@ systemctl start nginx
 success "Nginx instalado"
 
 # ── 4. MySQL 8 ───────────────────────────────────────────────────────────────
-info "Instalando MySQL 8 (repositorio oficial de MySQL)..."
-# Debian 12 no incluye MySQL 8 en repos base — usamos el repo oficial
-wget -qO /tmp/mysql-apt-config.deb \
-    https://dev.mysql.com/get/mysql-apt-config_0.8.30-1_all.deb
-DEBIAN_FRONTEND=noninteractive dpkg -i /tmp/mysql-apt-config.deb
-apt-get update -qq
+# Ubuntu 24.04 ya incluye MySQL 8 en sus repos base
+info "Instalando MySQL 8..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server
+
+# Asegurar que el socket está listo antes de crear la DB
+systemctl start mysql
+sleep 3
 
 mysql -u root << SQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -130,14 +127,36 @@ GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
 
+# Configurar charset global
+cat > /etc/mysql/conf.d/nexo.cnf << 'EOF'
+[mysqld]
+character-set-server  = utf8mb4
+collation-server      = utf8mb4_unicode_ci
+default-storage-engine = InnoDB
+innodb_buffer_pool_size = 256M
+max_connections = 200
+slow_query_log = 1
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time = 2
+
+[client]
+default-character-set = utf8mb4
+EOF
+
 systemctl enable mysql
+systemctl restart mysql
 success "MySQL 8 instalado (DB: ${DB_NAME}, usuario: ${DB_USER})"
 
 # ── 5. Redis ──────────────────────────────────────────────────────────────────
 info "Instalando Redis..."
 apt-get install -y -qq redis-server
-sed -i 's/^# maxmemory .*/maxmemory 256mb/' /etc/redis/redis.conf
+
+# Ubuntu 24 usa /etc/redis/redis.conf
+sed -i 's/^# maxmemory .*/maxmemory 256mb/'             /etc/redis/redis.conf
 sed -i 's/^# maxmemory-policy .*/maxmemory-policy allkeys-lru/' /etc/redis/redis.conf
+# Enlazar solo a localhost
+sed -i 's/^bind .*/bind 127.0.0.1 -::1/'                /etc/redis/redis.conf
+
 systemctl enable redis-server
 systemctl restart redis-server
 success "Redis instalado"
@@ -150,8 +169,9 @@ success "Node.js $(node -v) instalado"
 
 # ── 7. Composer ───────────────────────────────────────────────────────────────
 info "Instalando Composer..."
-curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
-success "Composer instalado"
+curl -sS https://getcomposer.org/installer \
+    | php -- --install-dir=/usr/local/bin --filename=composer
+success "Composer $(composer --version --no-ansi 2>&1 | head -1) instalado"
 
 # ── 8. Supervisor ─────────────────────────────────────────────────────────────
 info "Instalando Supervisor..."
@@ -160,9 +180,10 @@ systemctl enable supervisor
 systemctl start supervisor
 success "Supervisor instalado"
 
-# ── 9. Certbot ────────────────────────────────────────────────────────────────
-info "Instalando Certbot..."
-apt-get install -y -qq certbot python3-certbot-nginx
+# ── 9. Certbot (snap — recomendado en Ubuntu 24) ─────────────────────────────
+info "Instalando Certbot via snap..."
+snap install --classic certbot
+ln -sf /snap/bin/certbot /usr/bin/certbot
 success "Certbot instalado (úsalo cuando tengas dominio)"
 
 # ── 10. Usuario de la aplicación ──────────────────────────────────────────────
@@ -172,7 +193,6 @@ if ! id -u "$APP_USER" &>/dev/null; then
 fi
 usermod -aG www-data "$APP_USER"
 
-# Agregar clave SSH si se proporcionó
 if [ -n "$SSH_PUBLIC_KEY" ]; then
     mkdir -p /home/${APP_USER}/.ssh
     echo "$SSH_PUBLIC_KEY" >> /home/${APP_USER}/.ssh/authorized_keys
@@ -182,9 +202,9 @@ if [ -n "$SSH_PUBLIC_KEY" ]; then
     success "Clave SSH agregada para ${APP_USER}"
 fi
 
-# Permitir al usuario nexo usar sudo sin contraseña solo para comandos del deploy
+# Permisos sudo mínimos para el deploy
 cat > /etc/sudoers.d/nexo-deploy << 'SUDOERS'
-nexo ALL=(ALL) NOPASSWD: /usr/bin/composer, /usr/bin/npm, /usr/bin/git, /usr/sbin/supervisorctl
+nexo ALL=(ALL) NOPASSWD: /usr/bin/composer, /usr/bin/npm, /usr/bin/git, /usr/sbin/supervisorctl, /usr/bin/systemctl reload php8.3-fpm
 SUDOERS
 chmod 440 /etc/sudoers.d/nexo-deploy
 success "Usuario ${APP_USER} configurado"
@@ -201,14 +221,14 @@ if [ -n "$REPO_URL" ]; then
         warn "Repositorio ya existe, omitiendo clone"
     fi
 else
-    warn "REPO_URL vacío — clona manualmente con: git clone TU_REPO ${APP_DIR}"
+    warn "REPO_URL vacío — clona manualmente después: git clone TU_REPO ${APP_DIR}"
 fi
 
 chown -R "${APP_USER}:www-data" "$APP_DIR"
 chmod -R 755 "$APP_DIR"
 success "Directorio configurado"
 
-# ── 12. Nginx — config temporal (sin dominio, por IP) ─────────────────────────
+# ── 12. Nginx — config temporal o con dominio ─────────────────────────────────
 if [ -f "${APP_DIR}/deploy/nginx.conf" ] && [ -n "$DOMAIN" ]; then
     cp "${APP_DIR}/deploy/nginx.conf" /etc/nginx/sites-available/nexokeys
     sed -i "s/TU_DOMINIO/${DOMAIN}/g" /etc/nginx/sites-available/nexokeys
@@ -217,12 +237,17 @@ if [ -f "${APP_DIR}/deploy/nginx.conf" ] && [ -n "$DOMAIN" ]; then
     nginx -t && systemctl reload nginx
     success "Config Nginx instalada para ${DOMAIN}"
 else
-    # Config temporal HTTP-only para probar antes de tener dominio
+    # Config temporal HTTP-only — para probar con la IP del VPS
     cat > /etc/nginx/sites-available/nexokeys << NGINX
 server {
     listen 80 default_server;
     root ${APP_DIR}/public;
     index index.php;
+
+    client_max_body_size 20M;
+
+    add_header X-Frame-Options        "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff"    always;
 
     location / {
         try_files \$uri \$uri/ /index.php?\$query_string;
@@ -233,6 +258,13 @@ server {
         fastcgi_index index.php;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        fastcgi_hide_header X-Powered-By;
+    }
+
+    location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        access_log off;
     }
 
     location ~ /\. { deny all; }
@@ -241,7 +273,7 @@ NGINX
     ln -sf /etc/nginx/sites-available/nexokeys /etc/nginx/sites-enabled/nexokeys
     rm -f /etc/nginx/sites-enabled/default
     nginx -t && systemctl reload nginx
-    warn "Config Nginx temporal (HTTP por IP). Cuando tengas dominio, ejecuta: bash deploy/activate-ssl.sh"
+    warn "Config Nginx temporal (HTTP por IP). Activa SSL cuando tengas dominio: bash deploy/activate-ssl.sh"
 fi
 
 # ── 13. Config Supervisor ─────────────────────────────────────────────────────
@@ -249,10 +281,10 @@ if [ -f "${APP_DIR}/deploy/supervisor-nexo.conf" ]; then
     cp "${APP_DIR}/deploy/supervisor-nexo.conf" /etc/supervisor/conf.d/nexo-horizon.conf
     supervisorctl reread
     supervisorctl update
-    success "Config Supervisor instalada"
+    success "Config Supervisor instalada (Horizon)"
 fi
 
-# ── 14. Firewall ──────────────────────────────────────────────────────────────
+# ── 14. Firewall UFW ──────────────────────────────────────────────────────────
 info "Configurando firewall UFW..."
 ufw --force reset
 ufw default deny incoming
@@ -268,20 +300,23 @@ VPS_IP=$(curl -s ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
-echo -e "${GREEN}  ✅ VPS Debian 12 configurado — Contabo${NC}"
+echo -e "${GREEN}  ✅ Ubuntu 24 configurado — listo para deploy${NC}"
 echo ""
 echo -e "  IP del servidor: ${YELLOW}${VPS_IP}${NC}"
 echo ""
 echo -e "  📋 Próximos pasos:"
 echo ""
-echo -e "  1. Copia tu .env al servidor:"
+echo -e "  1. Copia tu .env de producción:"
 echo -e "     ${BLUE}scp .env root@${VPS_IP}:${APP_DIR}/.env${NC}"
+echo -e "     Edita: APP_ENV=production  APP_DEBUG=false"
+echo -e "            DB_HOST=127.0.0.1   DB_PASSWORD=${DB_PASS}"
+echo -e "            REDIS_HOST=127.0.0.1"
 echo ""
-echo -e "  2. Ejecuta el primer deploy:"
+echo -e "  2. Primer deploy:"
 echo -e "     ${BLUE}ssh root@${VPS_IP} 'cd ${APP_DIR} && bash deploy.sh'${NC}"
 echo ""
 echo -e "  3. Prueba la app en: ${BLUE}http://${VPS_IP}${NC}"
 echo ""
 echo -e "  4. Cuando tengas dominio, activa SSL:"
-echo -e "     ${BLUE}certbot --nginx -d tudominio.com -d www.tudominio.com${NC}"
+echo -e "     ${BLUE}bash ${APP_DIR}/deploy/activate-ssl.sh tudominio.com${NC}"
 echo -e "${GREEN}════════════════════════════════════════════════════════${NC}"
