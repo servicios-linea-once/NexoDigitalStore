@@ -23,11 +23,11 @@ APP_USER="nexo"
 APP_DIR="/var/www/nexokeys"
 PHP_VERSION="8.3"
 NODE_VERSION="20"
-REPO_URL=""          # ← git@github.com:tu-usuario/nexokeys.git
+REPO_URL="git@github.com:servicios-linea-once/NexoDigitalStore.git"          # ← git@github.com:tu-usuario/nexokeys.git
 DOMAIN=""            # ← tu dominio cuando lo tengas (déjalo vacío por ahora)
 DB_NAME="nexokeys"
 DB_USER="nexo_db"
-DB_PASS=""           # ← contraseña segura para MySQL (mínimo 16 chars)
+DB_PASS="@Jhon#Smith@2003RT"           # ← contraseña segura para MySQL (mínimo 16 chars)
 
 # Tu clave pública SSH (pégala aquí para no necesitar contraseña)
 # Obtenerla en tu máquina local con: cat ~/.ssh/id_ed25519.pub
