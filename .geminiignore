@@ -1,0 +1,13 @@
+vendor/
+node_modules/
+storage/
+bootstrap/cache/
+public/build/
+public/js/
+public/css/
+resources/js/ziggy.js
+*.log
+.env*
+!.env.example
+*.lock
+.git/

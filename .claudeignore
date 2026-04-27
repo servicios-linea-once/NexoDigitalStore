@@ -1,0 +1,39 @@
+# 🔒 Dependencias y caché del sistema
+vendor/
+node_modules/
+storage/
+bootstrap/cache/
+
+# 📦 Assets compilados y públicos
+public/js/
+public/css/
+public/build/
+public/mix-manifest.json
+public/hot
+public/vendor/
+
+# ⚙️ Archivos generados automáticamente
+resources/js/ziggy.js
+resources/js/ssr.js
+resources/views/**/*.blade.php.cache
+
+# 📝 Logs y configuración sensible
+*.log
+.env*
+!.env.example
+
+# 🔐 Bloqueos y metadatos
+*.lock
+composer.lock
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# 💻 IDE y SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 📦 Git
+.git/

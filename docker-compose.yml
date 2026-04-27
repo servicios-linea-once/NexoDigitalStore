@@ -1,0 +1,165 @@
+services:
+  # ── PHP-FPM (Laravel App) ───────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: development
+    container_name: nexo_app
+    restart: unless-stopped
+    working_dir: /var/www
+    volumes:
+      - .:/var/www
+      - app_node_modules:/var/www/node_modules
+      - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - nexo_net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Nginx ───────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nexo_nginx
+    restart: unless-stopped
+    ports:
+      - "8000:80"
+    volumes:
+      - .:/var/www
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    networks:
+      - nexo_net
+    depends_on:
+      - app
+
+  # ── MySQL 8 ─────────────────────────────────────────────────────────────
+  db:
+    image: mysql:8.0
+    container_name: nexo_db
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: nexo_digital_store
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_USER: nexo
+      MYSQL_PASSWORD: secret
+    ports:
+      - "33060:3306"
+    volumes:
+      - nexo_db_data:/var/lib/mysql
+      - ./docker/mysql/my.cnf:/etc/mysql/conf.d/my.cnf
+    networks:
+      - nexo_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-psecret"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  # ── Redis ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: nexo_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - nexo_redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - nexo_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+
+  # ── Queue Worker ─────────────────────────────────────────────────────────
+  queue:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: development
+    container_name: nexo_queue
+    restart: unless-stopped
+    working_dir: /var/www
+    command: php artisan queue:work redis --sleep=3 --tries=3 --max-time=3600
+    volumes:
+      - .:/var/www
+      - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - nexo_net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Scheduler ────────────────────────────────────────────────────────────
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: development
+    container_name: nexo_scheduler
+    restart: unless-stopped
+    working_dir: /var/www
+    command: sh -c "while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done"
+    volumes:
+      - .:/var/www
+      - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini
+    networks:
+      - nexo_net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Vite Dev Server ──────────────────────────────────────────────────────
+  vite:
+    image: node:22-alpine
+    container_name: nexo_vite
+    working_dir: /var/www
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/var/www
+      - vite_node_modules:/var/www/node_modules
+    networks:
+      - nexo_net
+    profiles:
+      - dev
+
+  # ── Meilisearch (Fase 2) ──────────────────────────────────────────────────
+  meilisearch:
+    image: getmeili/meilisearch:latest
+    container_name: nexo_meilisearch
+    restart: unless-stopped
+    ports:
+      - "7700:7700"
+    environment:
+      MEILI_MASTER_KEY: nexo_meili_key_change_me
+      MEILI_ENV: development
+    volumes:
+      - nexo_meili_data:/meili_data
+    networks:
+      - nexo_net
+    profiles:
+      - search
+
+networks:
+  nexo_net:
+    driver: bridge
+
+volumes:
+  nexo_db_data:
+  nexo_redis_data:
+  nexo_meili_data:
+  app_node_modules:
+  vite_node_modules:

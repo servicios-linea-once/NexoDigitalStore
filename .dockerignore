@@ -1,0 +1,33 @@
+# Git
+.git
+.gitignore
+
+# Logs
+storage/logs/*.log
+/storage/*.key
+.phpunit.result.cache
+
+# Node
+node_modules/
+
+# Environment
+.env
+.env.backup
+.env.production
+
+# Build artifacts
+public/build/
+public/hot
+public/storage
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker itself
+docker/data/
